@@ -1,0 +1,40 @@
+{
+    "name": "active-inference",
+    "version": "0.0.1",
+    "description": "Active Inference Framework implementation for JavaScript/TypeScript",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "build": "tsc",
+        "prepublishOnly": "npm run build"
+    },
+    "keywords": [
+        "active-inference",
+        "free-energy",
+        "bayesian",
+        "agent",
+        "friston",
+        "ai",
+        "machine-learning"
+    ],
+    "author": "Igor Rybakov <codevanger@gmail.com>",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/codevanger/active-inference"
+    },
+    "bugs": {
+        "url": "https://github.com/codevanger/active-inference/issues"
+    },
+    "homepage": "https://github.com/codevanger/active-inference#readme",
+    "devDependencies": {
+        "prettier": "^3.8.1",
+        "typescript": "^5.9.3",
+        "vitest": "^3.2.4"
+    }
+}
