@@ -2,9 +2,6 @@ import { Belief, Distribution, Preferences } from './belief.model';
 import { ITransitionModel } from './transition.model';
 import { IObservationModel } from './observation.model';
 import { LinearAlgebra, Random } from '../helpers/math.helpers';
-import { isLearnable } from './learnable.model';
-import type { DirichletObservation } from '../observation/dirichlet.observation';
-import type { DirichletTransition } from '../transition/dirichlet.transition';
 
 /**
  * Prior probability over actions, representing habitual action tendencies.
@@ -88,6 +85,7 @@ export class Agent<
     private _planningHorizon: number;
     private _precision: number;
     private _habits: Partial<Habits<A>>;
+    private _beamWidth: number;
     private _previousBelief: Belief<S> | null = null;
     private _previousAction: A | null = null;
 
@@ -102,6 +100,7 @@ export class Agent<
      * @param planningHorizon - Steps to plan ahead (default: 1)
      * @param precision - Action selection temperature (default: 1)
      * @param habits - Prior over actions (default: uniform)
+     * @param beamWidth - Max policies to keep at each planning depth (default: 0 = no limit)
      */
     constructor(
         belief: Belief<S>,
@@ -112,12 +111,14 @@ export class Agent<
         planningHorizon: number = 1,
         precision: number = 1,
         habits: Partial<Habits<A>> = {},
+        beamWidth: number = 0,
     ) {
         this._belief = belief.copy();
         this._random = random ?? new Random();
         this._planningHorizon = Math.max(1, Math.floor(planningHorizon));
         this._precision = Math.max(0, precision);
         this._habits = habits;
+        this._beamWidth = Math.max(0, Math.floor(beamWidth));
     }
 
     private get resolvedPreferences(): Preferences<O> {
@@ -163,6 +164,18 @@ export class Agent<
     }
 
     /**
+     * Replace the agent's belief with a new distribution.
+     *
+     * Useful for fully observable environments where the state
+     * is known directly from the observation.
+     *
+     * @param belief - New belief distribution
+     */
+    resetBelief(belief: Belief<S>): void {
+        this._belief = belief.copy();
+    }
+
+    /**
      * Select an action by minimizing Expected Free Energy.
      *
      * The agent:
@@ -184,12 +197,41 @@ export class Agent<
      * ```
      */
     act(): A {
-        const policies = this.generatePolicies(this._planningHorizon);
+        const actions = this.transitionModel.actions;
 
-        const policyEFEs: number[] = [];
-        for (const policy of policies) {
-            policyEFEs.push(this.evaluatePolicy(policy));
+        // Initialize beams: one per action
+        let beams: { policy: A[]; efe: number; belief: Belief<S> }[] = [];
+        for (const action of actions) {
+            const predicted = this.transitionModel.predict(this._belief, action);
+            const efe = this.computeAmbiguity(predicted) + this.computeRisk(predicted);
+            beams.push({ policy: [action], efe, belief: predicted });
         }
+
+        // Extend beams for remaining horizon steps
+        for (let depth = 1; depth < this._planningHorizon; depth++) {
+            const nextBeams: typeof beams = [];
+            for (const beam of beams) {
+                for (const action of actions) {
+                    const predicted = this.transitionModel.predict(beam.belief, action);
+                    const efe = this.computeAmbiguity(predicted) + this.computeRisk(predicted);
+                    nextBeams.push({
+                        policy: [...beam.policy, action],
+                        efe: beam.efe + efe,
+                        belief: predicted,
+                    });
+                }
+            }
+
+            if (this._beamWidth > 0 && nextBeams.length > this._beamWidth) {
+                nextBeams.sort((a, b) => a.efe - b.efe);
+                beams = nextBeams.slice(0, this._beamWidth);
+            } else {
+                beams = nextBeams;
+            }
+        }
+
+        const policies = beams.map((b) => b.policy);
+        const policyEFEs = beams.map((b) => b.efe);
 
         let policyProbs = LinearAlgebra.softmin(policyEFEs, this._precision);
 
@@ -295,65 +337,18 @@ export class Agent<
     private updateModels(observation: O): void {
         const posteriorDist = this.exportBelief();
 
-        // A-matrix: P(o|s)
-        if (isLearnable(this.observationModel)) {
-            (this.observationModel as unknown as DirichletObservation<O, S>).learn(
-                observation,
-                posteriorDist,
-            );
-        }
+        this.observationModel.learn?.(observation, posteriorDist);
 
-        // B-matrix: P(s'|s,a) — only after at least one action
-        if (
-            isLearnable(this.transitionModel) &&
-            this._previousAction !== null &&
-            this._previousBelief !== null
-        ) {
+        if (this._previousAction !== null && this._previousBelief !== null) {
             const prevDist = {} as Distribution<S>;
             for (const state of this._previousBelief.states) {
                 prevDist[state] = this._previousBelief.probability(state);
             }
 
-            (this.transitionModel as unknown as DirichletTransition<A, S>).learn(
-                this._previousAction,
-                prevDist,
-                posteriorDist,
-            );
-        }
-    }
-
-    /**
-     * Generate all possible policies (action sequences) of given depth.
-     * For depth=2 with actions [a,b]: [[a,a], [a,b], [b,a], [b,b]]
-     */
-    private generatePolicies(depth: number): A[][] {
-        const actions = this.transitionModel.actions;
-        if (depth <= 1) {
-            return actions.map((a) => [a]);
-        }
-        const policies: A[][] = [];
-        const subPolicies = this.generatePolicies(depth - 1);
-        for (const action of actions) {
-            for (const sub of subPolicies) {
-                policies.push([action, ...sub]);
+            if (this.transitionModel.learn) {
+                this.transitionModel.learn(this._previousAction, prevDist, posteriorDist);
             }
         }
-        return policies;
-    }
-
-    /**
-     * Evaluate a policy by computing its Expected Free Energy.
-     * G(π) = Σ_τ G(a_τ | Q_τ) where Q_τ is the predicted belief at time τ
-     */
-    private evaluatePolicy(policy: A[]): number {
-        let totalEFE = 0;
-        let currentBelief = this._belief;
-        for (const action of policy) {
-            const predicted = this.transitionModel.predict(currentBelief, action);
-            totalEFE += this.computeAmbiguity(predicted) + this.computeRisk(predicted);
-            currentBelief = predicted;
-        }
-        return totalEFE;
     }
 
     /**

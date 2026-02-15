@@ -9,15 +9,3 @@
 export interface ILearnable {
     readonly learnable: true;
 }
-
-/**
- * Type guard to check if a model supports learning.
- */
-export function isLearnable(obj: unknown): obj is ILearnable {
-    return (
-        typeof obj === 'object' &&
-        obj !== null &&
-        'learnable' in obj &&
-        (obj as ILearnable).learnable === true
-    );
-}

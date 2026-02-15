@@ -1,7 +1,6 @@
 import { Distribution } from '../models/belief.model';
 import type { Belief } from '../models/belief.model';
 import { ITransitionModel, TransitionMatrix } from '../models/transition.model';
-import { ILearnable } from '../models/learnable.model';
 import { DiscreteBelief } from '../beliefs/discrete.belief';
 
 /**
@@ -46,9 +45,8 @@ export type TransitionConcentrations<
 export class DirichletTransition<
     A extends string = string,
     S extends string = string,
-> implements ITransitionModel<A, S>, ILearnable
+> implements ITransitionModel<A, S>
 {
-    readonly learnable: true = true;
 
     private _matrix: TransitionMatrix<A, S> | null = null;
 

@@ -131,6 +131,19 @@ export interface AgentConfig<
      * - Action priors from experience
      */
     habits?: Partial<Habits<A>>;
+
+    /**
+     * Beam width for policy search.
+     *
+     * Limits the number of candidate policies kept at each planning depth.
+     * Without this, the agent evaluates all actions^horizon policies.
+     *
+     * - 0 = no limit (full enumeration, default)
+     * - N > 0 = keep top-N policies per depth (beam search)
+     *
+     * @default 0
+     */
+    beamWidth?: number;
 }
 
 /**
@@ -196,5 +209,6 @@ export function createAgent<
         config.planningHorizon ?? 1,
         config.precision ?? 1,
         config.habits ?? {},
+        config.beamWidth ?? 0,
     );
 }

@@ -162,8 +162,8 @@
         import {
             createAgent,
             DiscreteBelief,
-            DiscreteTransition,
-            DiscreteObservation
+            DirichletTransition,
+            DirichletObservation
         } from './active-inference.bundle.js';
 
         // ── Physics ──────────────────────────────────────────────
@@ -230,10 +230,10 @@
         // ── Build generative model from physics ──────────────────
         const ACTION_FORCES = { push_left: -FORCE_MAG, no_push: 0, push_right: FORCE_MAG };
 
-        function buildTransitionMatrix() {
-            const matrix = {};
+        function buildTransitionConcentrations() {
+            const conc = {};
             for (const [actionName, force] of Object.entries(ACTION_FORCES)) {
-                matrix[actionName] = {};
+                conc[actionName] = {};
                 for (let ai = 0; ai < NA; ai++) {
                     for (let vi = 0; vi < NV; vi++) {
                         const state = sid(ai, vi);
@@ -248,34 +248,27 @@
                         const [tai, tvi] = idx(target);
 
                         const dist = {};
-                        for (const s of STATES) dist[s] = 0.001;
-                        dist[target] += 0.70;
+                        for (const s of STATES) dist[s] = 0.01;
+                        dist[target] += 7.0;
                         for (const d of [-1, 1]) {
-                            if (tai + d >= 0 && tai + d < NA) dist[sid(tai + d, tvi)] += 0.04;
-                            if (tvi + d >= 0 && tvi + d < NV) dist[sid(tai, tvi + d)] += 0.04;
+                            if (tai + d >= 0 && tai + d < NA) dist[sid(tai + d, tvi)] += 0.4;
+                            if (tvi + d >= 0 && tvi + d < NV) dist[sid(tai, tvi + d)] += 0.4;
                         }
-                        const sum = Object.values(dist).reduce((a, b) => a + b, 0);
-                        for (const s of STATES) dist[s] /= sum;
-                        matrix[actionName][state] = dist;
+                        conc[actionName][state] = dist;
                     }
                 }
             }
-            return matrix;
+            return conc;
         }
 
-        function buildObservationMatrix() {
-            const matrix = {};
+        function buildObservationConcentrations() {
+            const conc = {};
             for (const obs of STATES) {
-                matrix[obs] = {};
+                conc[obs] = {};
                 for (const state of STATES)
-                    matrix[obs][state] = obs === state ? 1.0 : 0.0001;
+                    conc[obs][state] = obs === state ? 100 : 0.01;
             }
-            for (const state of STATES) {
-                let colSum = 0;
-                for (const obs of STATES) colSum += matrix[obs][state];
-                for (const obs of STATES) matrix[obs][state] /= colSum;
-            }
-            return matrix;
+            return conc;
         }
 
         function buildPreferences() {
@@ -288,34 +281,19 @@
             return prefs;
         }
 
-        // Pre-build models (shared across agent instances)
-        const transModel = new DiscreteTransition(buildTransitionMatrix());
-        const obsModel = new DiscreteObservation(buildObservationMatrix());
-        const preferences = buildPreferences();
+        // ── Agent ──────────────────────────────────────────────
+        const uniformBelief = {};
+        for (const s of STATES) uniformBelief[s] = 1 / STATES.length;
 
-        // ── Agent decision ───────────────────────────────────────
-        // Fresh agent per decision: set belief to observed state,
-        // then use EFE-based planning to select action.
-        let lastAgent = null;
-
-        function decide(obs) {
-            const belief = {};
-            for (const s of STATES)
-                belief[s] = s === obs ? 0.95 : 0.05 / (STATES.length - 1);
-
-            const agent = createAgent({
-                belief: new DiscreteBelief(belief),
-                transitionModel: transModel,
-                observationModel: obsModel,
-                preferences,
-                planningHorizon: 3,
-                precision: 8,
-                seed: 42
-            });
-            agent.observe(obs);
-            lastAgent = agent;
-            return agent.act();
-        }
+        const agent = createAgent({
+            belief: new DiscreteBelief(uniformBelief),
+            transitionModel: new DirichletTransition(buildTransitionConcentrations()),
+            observationModel: new DirichletObservation(buildObservationConcentrations()),
+            preferences: buildPreferences(),
+            planningHorizon: 3,
+            precision: 8,
+            seed: 42
+        });
 
         // ── Rendering ────────────────────────────────────────────
         const canvas = document.getElementById('canvas');
@@ -445,7 +423,7 @@
             document.getElementById('statState').textContent = obs;
             document.getElementById('statAction').textContent = currentAction || '—';
             document.getElementById('statFE').textContent =
-                lastAgent ? lastAgent.freeEnergy.toFixed(2) : '—';
+                agent.freeEnergy.toFixed(2);
         }
 
         // ── Game state ───────────────────────────────────────────
@@ -467,7 +445,7 @@
                 thetaDot: 0
             };
             currentAction = 'no_push';
-            lastAgent = null;
+            agent.resetBelief(new DiscreteBelief(uniformBelief));
             episodeTime = 0;
             failed = false;
             document.getElementById('failBanner').classList.remove('show');
@@ -519,7 +497,11 @@
                 }
 
                 const obs = discretize(sim.theta, sim.thetaDot);
-                currentAction = decide(obs);
+                const belief = {};
+                for (const s of STATES)
+                    belief[s] = s === obs ? 0.95 : 0.05 / (STATES.length - 1);
+                agent.resetBelief(new DiscreteBelief(belief));
+                currentAction = agent.step(obs);
             }
 
             render(sim);

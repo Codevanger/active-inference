@@ -3,7 +3,6 @@ import {
     IObservationModel,
     ObservationMatrix,
 } from '../models/observation.model';
-import { ILearnable } from '../models/learnable.model';
 
 /**
  * Dirichlet concentration parameters for observation model.
@@ -51,9 +50,8 @@ export type ObservationConcentrations<
 export class DirichletObservation<
     O extends string = string,
     S extends string = string,
-> implements IObservationModel<O, S>, ILearnable
+> implements IObservationModel<O, S>
 {
-    readonly learnable: true = true;
 
     private _matrix: ObservationMatrix<O, S> | null = null;
 

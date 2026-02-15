@@ -83,4 +83,13 @@ export interface IObservationModel<
      * @returns Probability between 0 and 1
      */
     probability(observation: O, state: S): number;
+
+    /**
+     * Update model from experience (optional).
+     * Learnable models refine their parameters after each observation.
+     *
+     * @param observation - The observation received
+     * @param posteriorBelief - Posterior belief over states
+     */
+    learn?(observation: O, posteriorBelief: Distribution<S>): void;
 }

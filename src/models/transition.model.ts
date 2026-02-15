@@ -73,4 +73,14 @@ export interface ITransitionModel<
      * @returns Predicted belief after the action
      */
     predict(belief: Belief<S>, action: A): Belief<S>;
+
+    /**
+     * Update model from experience (optional).
+     * Learnable models refine their parameters after each transition.
+     *
+     * @param action - The action taken
+     * @param priorBelief - Belief before the action
+     * @param posteriorBelief - Belief after observing the outcome
+     */
+    learn?(action: A, priorBelief: Distribution<S>, posteriorBelief: Distribution<S>): void;
 }
