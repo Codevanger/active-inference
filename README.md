@@ -9,7 +9,7 @@ Active Inference is a theory of how biological agents perceive and act in the wo
 - **Risk**: avoiding unpreferred outcomes
 - **Ambiguity**: seeking informative observations
 
-This library provides building blocks for creating agents that learn from observations and plan actions using these principles.
+This library provides building blocks for creating agents that perceive, learn, plan, and act using these principles.
 
 ## Installation
 
@@ -61,6 +61,7 @@ const action = agent.step('see_reward');
 | `preferences` | Log probabilities of preferred observations |
 | `planningHorizon` | Steps to look ahead (default: 1) |
 | `precision` | Action selection temperature (default: 1) |
+| `habits` | Prior over actions / E matrix (default: uniform) |
 | `seed` | Random seed for reproducibility |
 
 ### Agent
@@ -74,6 +75,58 @@ const action = agent.step('see_reward');
 | `uncertainty` | Belief entropy (confidence) |
 | `freeEnergy` | Variational Free Energy |
 | `exportBelief()` | Get full belief distribution |
+
+## Learning
+
+The library supports **Dirichlet-categorical learning** — agents that update their generative models from experience. Instead of fixed probability matrices, learnable models maintain pseudo-count concentrations that are refined over time.
+
+- `DirichletObservation` and `DirichletTransition` are drop-in replacements for their Discrete counterparts. Learning happens automatically on every `step()` call.
+- `DirichletPreferences` provides learnable preferred observations — call `.learn()` manually and pass `.preferences` to the agent config.
+
+Low concentrations encode weak priors (learns fast). High concentrations encode strong priors (resists change).
+
+```typescript
+import {
+    createAgent,
+    DiscreteBelief,
+    DirichletTransition,
+    DirichletObservation,
+} from 'active-inference';
+
+const agent = createAgent({
+    belief: new DiscreteBelief({ safe: 0.5, danger: 0.5 }),
+    transitionModel: new DirichletTransition({
+        flee: {
+            safe:   { safe: 1, danger: 1 },
+            danger: { safe: 1, danger: 1 },
+        },
+        stay: {
+            safe:   { safe: 1, danger: 1 },
+            danger: { safe: 1, danger: 1 },
+        },
+    }),
+    observationModel: new DirichletObservation({
+        see_safe:   { safe: 1, danger: 1 },
+        see_danger: { safe: 1, danger: 1 },
+    }),
+    preferences: { see_safe: 0, see_danger: -5 },
+    seed: 42,
+});
+
+// Models update automatically on each step
+const action = agent.step('see_safe');
+```
+
+## Examples
+
+### Cart-Pole Balancing
+
+Interactive browser demo — an Active Inference agent balances an inverted pendulum using a 49-state generative model with 3-step planning horizon.
+
+```bash
+npm run build:examples
+open examples/cart-pole/index.html
+```
 
 ## Contributing
 

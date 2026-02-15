@@ -2,6 +2,9 @@ import { Belief, Distribution, Preferences } from './belief.model';
 import { ITransitionModel } from './transition.model';
 import { IObservationModel } from './observation.model';
 import { LinearAlgebra, Random } from '../helpers/math.helpers';
+import { isLearnable } from './learnable.model';
+import type { DirichletObservation } from '../observation/dirichlet.observation';
+import type { DirichletTransition } from '../transition/dirichlet.transition';
 
 /**
  * Prior probability over actions, representing habitual action tendencies.
@@ -85,6 +88,8 @@ export class Agent<
     private _planningHorizon: number;
     private _precision: number;
     private _habits: Partial<Habits<A>>;
+    private _previousBelief: Belief<S> | null = null;
+    private _previousAction: A | null = null;
 
     /**
      * Create a new Active Inference agent.
@@ -113,6 +118,10 @@ export class Agent<
         this._planningHorizon = Math.max(1, Math.floor(planningHorizon));
         this._precision = Math.max(0, precision);
         this._habits = habits;
+    }
+
+    private get resolvedPreferences(): Preferences<O> {
+        return this.preferences;
     }
 
     /**
@@ -217,7 +226,14 @@ export class Agent<
      */
     step(observation: O): A {
         this.observe(observation);
-        return this.act();
+        this.updateModels(observation);
+
+        const action = this.act();
+
+        this._previousBelief = this._belief;
+        this._previousAction = action;
+
+        return action;
     }
 
     /**
@@ -267,6 +283,43 @@ export class Agent<
      */
     get freeEnergy(): number {
         return -this._belief.entropy() + this.computeAmbiguity(this._belief);
+    }
+
+    /**
+     * Update learnable models from the current observation and belief.
+     *
+     * Called after observe() so the posterior belief is available.
+     * - A-learning: update observation model with (observation, posterior)
+     * - B-learning: update transition model with (previous_action, previous_belief, posterior)
+     */
+    private updateModels(observation: O): void {
+        const posteriorDist = this.exportBelief();
+
+        // A-matrix: P(o|s)
+        if (isLearnable(this.observationModel)) {
+            (this.observationModel as unknown as DirichletObservation<O, S>).learn(
+                observation,
+                posteriorDist,
+            );
+        }
+
+        // B-matrix: P(s'|s,a) — only after at least one action
+        if (
+            isLearnable(this.transitionModel) &&
+            this._previousAction !== null &&
+            this._previousBelief !== null
+        ) {
+            const prevDist = {} as Distribution<S>;
+            for (const state of this._previousBelief.states) {
+                prevDist[state] = this._previousBelief.probability(state);
+            }
+
+            (this.transitionModel as unknown as DirichletTransition<A, S>).learn(
+                this._previousAction,
+                prevDist,
+                posteriorDist,
+            );
+        }
     }
 
     /**
@@ -347,6 +400,7 @@ export class Agent<
      */
     private computeRisk(predictedBelief: Belief<S>): number {
         let risk = 0;
+        const prefs = this.resolvedPreferences;
 
         for (const obs of this.observationModel.observations) {
             let expectedObsProb = 0;
@@ -357,7 +411,7 @@ export class Agent<
                     predictedBelief.probability(state);
             }
 
-            const preferredLogProb = this.preferences[obs] ?? -10;
+            const preferredLogProb = prefs[obs] ?? -10;
 
             if (expectedObsProb > 0) {
                 risk -= expectedObsProb * preferredLogProb;

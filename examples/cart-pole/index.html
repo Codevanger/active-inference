@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cart Pole — Active Inference</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0f172a;
+            color: #e2e8f0;
+            font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 24px;
+        }
+        h1 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: #f8fafc;
+        }
+        .subtitle {
+            font-size: 13px;
+            color: #64748b;
+            margin-bottom: 20px;
+        }
+        canvas {
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            background: #020617;
+        }
+        #stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-top: 16px;
+            width: 800px;
+        }
+        .stat {
+            background: #1e293b;
+            border-radius: 6px;
+            padding: 10px 14px;
+        }
+        .stat-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: #64748b;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .stat-value {
+            font-size: 16px;
+            font-weight: 600;
+            color: #f1f5f9;
+        }
+        #controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+            align-items: center;
+        }
+        button {
+            background: #1e293b;
+            color: #e2e8f0;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            padding: 8px 18px;
+            font-family: inherit;
+            font-size: 13px;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        button:hover { background: #334155; }
+        button.active {
+            background: #3b82f6;
+            border-color: #3b82f6;
+            color: #fff;
+        }
+        .speed-group {
+            display: flex;
+            gap: 4px;
+            margin-left: 16px;
+        }
+        .speed-group button {
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+        .failed-banner {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 28px;
+            font-weight: 700;
+            color: #ef4444;
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+        }
+        .failed-banner.show { opacity: 1; }
+        .canvas-wrap { position: relative; }
+    </style>
+</head>
+<body>
+    <h1>Cart Pole Control with Active Inference</h1>
+    <p class="subtitle">Agent balances a pole by minimizing Expected Free Energy</p>
+
+    <div class="canvas-wrap">
+        <canvas id="canvas" width="800" height="350"></canvas>
+        <div id="failBanner" class="failed-banner">FELL!</div>
+    </div>
+
+    <div id="stats">
+        <div class="stat">
+            <div class="stat-label">Episode</div>
+            <div class="stat-value" id="statEpisode">1</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Time</div>
+            <div class="stat-value" id="statTime">0.0s</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Best</div>
+            <div class="stat-value" id="statBest">0.0s</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Angle</div>
+            <div class="stat-value" id="statAngle">0.0°</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Velocity</div>
+            <div class="stat-value" id="statVelocity">0.00</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Agent State</div>
+            <div class="stat-value" id="statState">—</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Action</div>
+            <div class="stat-value" id="statAction">—</div>
+        </div>
+        <div class="stat">
+            <div class="stat-label">Free Energy</div>
+            <div class="stat-value" id="statFE">—</div>
+        </div>
+    </div>
+
+    <div id="controls">
+        <button id="startBtn">Start</button>
+        <button id="resetBtn">Reset</button>
+        <div class="speed-group">
+            <button class="speed-btn active" data-speed="1">1x</button>
+            <button class="speed-btn" data-speed="2">2x</button>
+            <button class="speed-btn" data-speed="5">5x</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import {
+            createAgent,
+            DiscreteBelief,
+            DiscreteTransition,
+            DiscreteObservation
+        } from './active-inference.bundle.js';
+
+        // ── Physics ──────────────────────────────────────────────
+        const GRAVITY = 9.8;
+        const CART_MASS = 1.0;
+        const POLE_MASS = 0.1;
+        const POLE_HALF_LEN = 0.5;
+        const TOTAL_MASS = CART_MASS + POLE_MASS;
+        const FORCE_MAG = 10.0;
+        const DT = 0.02;
+        const STEPS_PER_DECISION = 5;   // 10 Hz decisions
+        const FAIL_ANGLE = 15 * Math.PI / 180;
+
+        function physicsStep(x, xDot, theta, thetaDot, force) {
+            const cosT = Math.cos(theta);
+            const sinT = Math.sin(theta);
+            const temp = (force + POLE_MASS * POLE_HALF_LEN * thetaDot * thetaDot * sinT) / TOTAL_MASS;
+            const thetaAcc = (GRAVITY * sinT - cosT * temp) /
+                (POLE_HALF_LEN * (4 / 3 - POLE_MASS * cosT * cosT / TOTAL_MASS));
+            const xAcc = temp - POLE_MASS * POLE_HALF_LEN * thetaAcc * cosT / TOTAL_MASS;
+            return {
+                x: x + xDot * DT,
+                xDot: xDot + xAcc * DT,
+                theta: theta + thetaDot * DT,
+                thetaDot: thetaDot + thetaAcc * DT
+            };
+        }
+
+        // ── State space: 7 angle × 7 velocity = 49 states ───────
+        const NA = 7, NV = 7;
+        const A_EDGES = [-8, -5, -2, 2, 5, 8].map(d => d * Math.PI / 180);
+        const V_EDGES = [-2.0, -1.2, -0.4, 0.4, 1.2, 2.0];
+        const A_CENTERS = [-10, -6.5, -3.5, 0, 3.5, 6.5, 10].map(d => d * Math.PI / 180);
+        const V_CENTERS = [-2.5, -1.6, -0.8, 0, 0.8, 1.6, 2.5];
+
+        const A_LABELS = ['far-left', 'left', 'slight-left', 'center', 'slight-right', 'right', 'far-right'];
+        const V_LABELS = ['fast-', 'slow-', 'still-', 'still+', 'slow+', 'fast+'];
+
+        const STATES = [];
+        for (let a = 0; a < NA; a++)
+            for (let v = 0; v < NV; v++)
+                STATES.push('s' + a + v);
+
+        function sid(a, v) { return 's' + a + v; }
+        function idx(s) { return [+s[1], +s[2]]; }
+
+        function discretize(theta, thetaDot) {
+            let ai = NA - 1;
+            for (let i = 0; i < A_EDGES.length; i++) {
+                if (theta < A_EDGES[i]) { ai = i; break; }
+            }
+            let vi = NV - 1;
+            for (let i = 0; i < V_EDGES.length; i++) {
+                if (thetaDot < V_EDGES[i]) { vi = i; break; }
+            }
+            return sid(ai, vi);
+        }
+
+        function stateLabel(s) {
+            const [a, v] = idx(s);
+            return A_LABELS[a] + ' / ' + (V_LABELS[v] || 'v' + v);
+        }
+
+        // ── Build generative model from physics ──────────────────
+        const ACTION_FORCES = { push_left: -FORCE_MAG, no_push: 0, push_right: FORCE_MAG };
+
+        function buildTransitionMatrix() {
+            const matrix = {};
+            for (const [actionName, force] of Object.entries(ACTION_FORCES)) {
+                matrix[actionName] = {};
+                for (let ai = 0; ai < NA; ai++) {
+                    for (let vi = 0; vi < NV; vi++) {
+                        const state = sid(ai, vi);
+                        let theta = A_CENTERS[ai], thetaDot = V_CENTERS[vi], x = 0, xDot = 0;
+
+                        for (let step = 0; step < STEPS_PER_DECISION; step++) {
+                            const r = physicsStep(x, xDot, theta, thetaDot, force);
+                            x = r.x; xDot = r.xDot; theta = r.theta; thetaDot = r.thetaDot;
+                        }
+
+                        const target = discretize(theta, thetaDot);
+                        const [tai, tvi] = idx(target);
+
+                        const dist = {};
+                        for (const s of STATES) dist[s] = 0.001;
+                        dist[target] += 0.70;
+                        for (const d of [-1, 1]) {
+                            if (tai + d >= 0 && tai + d < NA) dist[sid(tai + d, tvi)] += 0.04;
+                            if (tvi + d >= 0 && tvi + d < NV) dist[sid(tai, tvi + d)] += 0.04;
+                        }
+                        const sum = Object.values(dist).reduce((a, b) => a + b, 0);
+                        for (const s of STATES) dist[s] /= sum;
+                        matrix[actionName][state] = dist;
+                    }
+                }
+            }
+            return matrix;
+        }
+
+        function buildObservationMatrix() {
+            const matrix = {};
+            for (const obs of STATES) {
+                matrix[obs] = {};
+                for (const state of STATES)
+                    matrix[obs][state] = obs === state ? 1.0 : 0.0001;
+            }
+            for (const state of STATES) {
+                let colSum = 0;
+                for (const obs of STATES) colSum += matrix[obs][state];
+                for (const obs of STATES) matrix[obs][state] /= colSum;
+            }
+            return matrix;
+        }
+
+        function buildPreferences() {
+            const prefs = {};
+            for (const state of STATES) {
+                const [ai, vi] = idx(state);
+                const ad = Math.abs(ai - 3), vd = Math.abs(vi - 3);
+                prefs[state] = -(ad * ad * 3 + vd * vd * 2);
+            }
+            return prefs;
+        }
+
+        // Pre-build models (shared across agent instances)
+        const transModel = new DiscreteTransition(buildTransitionMatrix());
+        const obsModel = new DiscreteObservation(buildObservationMatrix());
+        const preferences = buildPreferences();
+
+        // ── Agent decision ───────────────────────────────────────
+        // Fresh agent per decision: set belief to observed state,
+        // then use EFE-based planning to select action.
+        let lastAgent = null;
+
+        function decide(obs) {
+            const belief = {};
+            for (const s of STATES)
+                belief[s] = s === obs ? 0.95 : 0.05 / (STATES.length - 1);
+
+            const agent = createAgent({
+                belief: new DiscreteBelief(belief),
+                transitionModel: transModel,
+                observationModel: obsModel,
+                preferences,
+                planningHorizon: 3,
+                precision: 8,
+                seed: 42
+            });
+            agent.observe(obs);
+            lastAgent = agent;
+            return agent.act();
+        }
+
+        // ── Rendering ────────────────────────────────────────────
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const W = canvas.width;
+        const H = canvas.height;
+        const TRACK_Y = 260;
+        const CART_W = 70;
+        const CART_H = 36;
+        const POLE_LEN = 140;
+        const WHEEL_R = 7;
+
+        function poleColor(absAngle) {
+            const t = Math.min(absAngle / FAIL_ANGLE, 1);
+            if (t < 0.3) return '#22c55e';
+            if (t < 0.65) return '#eab308';
+            return '#ef4444';
+        }
+
+        function render(state) {
+            ctx.clearRect(0, 0, W, H);
+
+            // Track
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(40, TRACK_Y);
+            ctx.lineTo(W - 40, TRACK_Y);
+            ctx.stroke();
+
+            // Track ticks
+            ctx.fillStyle = '#475569';
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'center';
+            for (let xm = -4; xm <= 4; xm++) {
+                const px = W / 2 + (xm / 5) * (W / 2 - 60);
+                ctx.beginPath();
+                ctx.moveTo(px, TRACK_Y - 4);
+                ctx.lineTo(px, TRACK_Y + 4);
+                ctx.stroke();
+                if (xm % 2 === 0) ctx.fillText(`${xm}m`, px, TRACK_Y + 16);
+            }
+
+            // Cart position on canvas (wraps around view)
+            const viewX = ((state.x % 10) + 10) % 10 - 5;
+            const cartX = W / 2 + (viewX / 5) * (W / 2 - 60);
+            const cartTop = TRACK_Y - CART_H;
+
+            // Cart body
+            ctx.fillStyle = '#3b82f6';
+            ctx.beginPath();
+            ctx.roundRect(cartX - CART_W / 2, cartTop, CART_W, CART_H, 4);
+            ctx.fill();
+
+            // Wheels
+            ctx.fillStyle = '#64748b';
+            ctx.beginPath();
+            ctx.arc(cartX - CART_W / 3, TRACK_Y, WHEEL_R, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(cartX + CART_W / 3, TRACK_Y, WHEEL_R, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Pole
+            const poleStartX = cartX;
+            const poleStartY = cartTop;
+            const poleEndX = poleStartX + Math.sin(state.theta) * POLE_LEN;
+            const poleEndY = poleStartY - Math.cos(state.theta) * POLE_LEN;
+
+            ctx.strokeStyle = poleColor(Math.abs(state.theta));
+            ctx.lineWidth = 5;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(poleStartX, poleStartY);
+            ctx.lineTo(poleEndX, poleEndY);
+            ctx.stroke();
+
+            // Pole tip
+            ctx.fillStyle = poleColor(Math.abs(state.theta));
+            ctx.beginPath();
+            ctx.arc(poleEndX, poleEndY, 6, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Hinge
+            ctx.fillStyle = '#94a3b8';
+            ctx.beginPath();
+            ctx.arc(poleStartX, poleStartY, 5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Force arrow
+            if (currentAction && running && currentAction !== 'no_push') {
+                const arrowDir = currentAction === 'push_right' ? 1 : -1;
+                const arrowX = cartX + arrowDir * (CART_W / 2 + 10);
+                const arrowY = cartTop + CART_H / 2;
+                ctx.strokeStyle = '#f59e0b';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(arrowX, arrowY);
+                ctx.lineTo(arrowX + arrowDir * 25, arrowY);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(arrowX + arrowDir * 25, arrowY);
+                ctx.lineTo(arrowX + arrowDir * 18, arrowY - 5);
+                ctx.moveTo(arrowX + arrowDir * 25, arrowY);
+                ctx.lineTo(arrowX + arrowDir * 18, arrowY + 5);
+                ctx.stroke();
+            }
+
+            // Info bar
+            ctx.fillStyle = '#64748b';
+            ctx.font = '11px monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText('States: 49 (7x7)  |  Actions: 3  |  Horizon: 3  |  Precision: 8', 16, 20);
+        }
+
+        // ── Stats ────────────────────────────────────────────────
+        function updateStats() {
+            document.getElementById('statEpisode').textContent = episode;
+            document.getElementById('statTime').textContent = episodeTime.toFixed(1) + 's';
+            document.getElementById('statBest').textContent = bestTime.toFixed(1) + 's';
+            document.getElementById('statAngle').textContent =
+                (sim.theta * 180 / Math.PI).toFixed(1) + '\u00B0';
+            document.getElementById('statVelocity').textContent =
+                sim.thetaDot.toFixed(2) + ' rad/s';
+
+            const obs = discretize(sim.theta, sim.thetaDot);
+            document.getElementById('statState').textContent = obs;
+            document.getElementById('statAction').textContent = currentAction || '—';
+            document.getElementById('statFE').textContent =
+                lastAgent ? lastAgent.freeEnergy.toFixed(2) : '—';
+        }
+
+        // ── Game state ───────────────────────────────────────────
+        let sim = { x: 0, xDot: 0, theta: 0.05, thetaDot: 0 };
+        let currentAction = 'no_push';
+        let running = false;
+        let failed = false;
+        let episode = 1;
+        let episodeTime = 0;
+        let bestTime = 0;
+        let speed = 1;
+        let lastTickTime = 0;
+        let animFrameId = null;
+
+        function resetEpisode() {
+            sim = {
+                x: 0, xDot: 0,
+                theta: (Math.random() - 0.5) * 0.1,
+                thetaDot: 0
+            };
+            currentAction = 'no_push';
+            lastAgent = null;
+            episodeTime = 0;
+            failed = false;
+            document.getElementById('failBanner').classList.remove('show');
+            render(sim);
+            updateStats();
+        }
+
+        function onFail() {
+            failed = true;
+            if (episodeTime > bestTime) bestTime = episodeTime;
+            document.getElementById('failBanner').classList.add('show');
+            updateStats();
+
+            setTimeout(() => {
+                episode++;
+                resetEpisode();
+                if (running) {
+                    lastTickTime = 0;
+                    animFrameId = requestAnimationFrame(gameLoop);
+                }
+            }, 1500);
+        }
+
+        function gameLoop(timestamp) {
+            if (!running || failed) return;
+
+            const tickInterval = 100 / speed;
+            if (lastTickTime === 0) lastTickTime = timestamp;
+
+            while (timestamp - lastTickTime >= tickInterval) {
+                lastTickTime += tickInterval;
+
+                const force = ACTION_FORCES[currentAction] ?? 0;
+                for (let i = 0; i < STEPS_PER_DECISION; i++) {
+                    const next = physicsStep(
+                        sim.x, sim.xDot, sim.theta, sim.thetaDot, force
+                    );
+                    sim.x = next.x;
+                    sim.xDot = next.xDot;
+                    sim.theta = next.theta;
+                    sim.thetaDot = next.thetaDot;
+                }
+                episodeTime += DT * STEPS_PER_DECISION;
+
+                if (Math.abs(sim.theta) > FAIL_ANGLE) {
+                    render(sim);
+                    onFail();
+                    return;
+                }
+
+                const obs = discretize(sim.theta, sim.thetaDot);
+                currentAction = decide(obs);
+            }
+
+            render(sim);
+            updateStats();
+            animFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        // ── Controls ─────────────────────────────────────────────
+        const startBtn = document.getElementById('startBtn');
+        const resetBtn = document.getElementById('resetBtn');
+
+        startBtn.addEventListener('click', () => {
+            if (running) {
+                running = false;
+                if (animFrameId) cancelAnimationFrame(animFrameId);
+                startBtn.textContent = 'Start';
+            } else {
+                running = true;
+                lastTickTime = 0;
+                startBtn.textContent = 'Pause';
+                animFrameId = requestAnimationFrame(gameLoop);
+            }
+        });
+
+        resetBtn.addEventListener('click', () => {
+            running = false;
+            if (animFrameId) cancelAnimationFrame(animFrameId);
+            startBtn.textContent = 'Start';
+            episode = 1;
+            bestTime = 0;
+            resetEpisode();
+        });
+
+        document.querySelectorAll('.speed-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.speed-btn').forEach(b =>
+                    b.classList.remove('active')
+                );
+                btn.classList.add('active');
+                speed = parseInt(btn.dataset.speed);
+            });
+        });
+
+        // ── Init ─────────────────────────────────────────────────
+        render(sim);
+        updateStats();
+    </script>
+</body>
+</html>
