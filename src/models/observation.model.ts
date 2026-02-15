@@ -1,4 +1,4 @@
-import { Distribution } from './belief.model';
+import { Belief, Distribution } from './belief.model';
 
 /**
  * Observation likelihood matrix (A matrix in Active Inference notation).
@@ -83,6 +83,16 @@ export interface IObservationModel<
      * @returns Probability between 0 and 1
      */
     probability(observation: O, state: S): number;
+
+    /**
+     * Update belief given an observation.
+     * Encapsulates the full perception step (e.g. Bayesian update, Kalman filter).
+     *
+     * @param belief - Current belief over states
+     * @param observation - The observation received
+     * @returns Updated belief
+     */
+    update(belief: Belief<S>, observation: O): Belief<S>;
 
     /**
      * Update model from experience (optional).

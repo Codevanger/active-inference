@@ -1,4 +1,4 @@
-import { Distribution } from '../models/belief.model';
+import { Belief, Distribution } from '../models/belief.model';
 import {
     IObservationModel,
     ObservationMatrix,
@@ -117,6 +117,10 @@ export class DirichletObservation<
                 posteriorBelief[state] ?? 0;
         }
         this._matrix = null;
+    }
+
+    update(belief: Belief<S>, observation: O): Belief<S> {
+        return belief.update(this.getLikelihood(observation));
     }
 
     /**

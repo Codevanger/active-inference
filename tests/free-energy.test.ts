@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createAgent } from '../src/factory';
+import { createAgent, computeAmbiguity } from '../src/factory';
 import { DiscreteBelief } from '../src/beliefs/discrete.belief';
 import { DiscreteTransition } from '../src/transition/discrete.transition';
 import { DiscreteObservation } from '../src/observation/discrete.observation';
@@ -69,9 +69,14 @@ describe('Free Energy Principle', () => {
                 preferences: { light_on: NEUTRAL_PREFERENCE, light_off: WEAK_PENALTY },
             });
 
-            expect(confidentAgent.freeEnergy).toBeGreaterThan(
-                uncertainAgent.freeEnergy,
-            );
+            const confidentVFE =
+                -confidentAgent.belief.entropy() +
+                computeAmbiguity(confidentAgent.belief, observationModel);
+            const uncertainVFE =
+                -uncertainAgent.belief.entropy() +
+                computeAmbiguity(uncertainAgent.belief, observationModel);
+
+            expect(confidentVFE).toBeGreaterThan(uncertainVFE);
         });
 
         it('observation reduces belief entropy', () => {
@@ -85,9 +90,9 @@ describe('Free Energy Principle', () => {
                 preferences: { light_on: NEUTRAL_PREFERENCE, light_off: WEAK_PENALTY },
             });
 
-            const entropyBefore = agent.uncertainty;
+            const entropyBefore = agent.belief.entropy();
             agent.observe('light_on');
-            const entropyAfter = agent.uncertainty;
+            const entropyAfter = agent.belief.entropy();
 
             expect(entropyAfter).toBeLessThan(entropyBefore);
         });

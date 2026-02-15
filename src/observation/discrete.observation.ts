@@ -1,4 +1,4 @@
-import { Distribution } from '../models/belief.model';
+import { Belief, Distribution } from '../models/belief.model';
 import {
     IObservationModel,
     ObservationMatrix,
@@ -150,5 +150,9 @@ export class DiscreteObservation<
      */
     probability(observation: O, state: S): number {
         return this.matrix[observation]?.[state] ?? 0;
+    }
+
+    update(belief: Belief<S>, observation: O): Belief<S> {
+        return belief.update(this.getLikelihood(observation));
     }
 }

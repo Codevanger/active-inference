@@ -63,15 +63,15 @@ describe('Cookie Jar', () => {
     it('creates an agent', () => {
         const agent = makeAgent();
         expect(agent).toBeDefined();
-        expect(Object.keys(agent.exportBelief())).toContain('cookie_left');
-        expect(Object.keys(agent.exportBelief())).toContain('cookie_right');
+        expect(agent.belief.states).toContain('cookie_left');
+        expect(agent.belief.states).toContain('cookie_right');
     });
 
     it('updates belief after observing see_cookie', () => {
         const agent = makeAgent();
-        expect(agent.exportBelief().cookie_left).toBeCloseTo(UNIFORM_PRIOR);
+        expect(agent.belief.probability('cookie_left')).toBeCloseTo(UNIFORM_PRIOR);
         agent.observe('see_cookie');
-        expect(agent.exportBelief().cookie_left).toBeGreaterThan(
+        expect(agent.belief.probability('cookie_left')).toBeGreaterThan(
             HIGH_PROBABILITY_THRESHOLD,
         );
     });
@@ -79,7 +79,7 @@ describe('Cookie Jar', () => {
     it('updates belief after observing see_empty', () => {
         const agent = makeAgent();
         agent.observe('see_empty');
-        expect(agent.exportBelief().cookie_right).toBeGreaterThan(
+        expect(agent.belief.probability('cookie_right')).toBeGreaterThan(
             HIGH_PROBABILITY_THRESHOLD,
         );
     });
@@ -95,15 +95,15 @@ describe('Cookie Jar', () => {
         const action = agent.step('see_cookie');
 
         expect(['go_left', 'go_right', 'stay']).toContain(action);
-        expect(agent.exportBelief().cookie_left).toBeGreaterThan(
+        expect(agent.belief.probability('cookie_left')).toBeGreaterThan(
             UNIFORM_PRIOR,
         );
     });
 
-    it('state returns most likely state', () => {
+    it('argmax returns most likely state', () => {
         const agent = makeAgent();
         agent.observe('see_cookie');
-        expect(agent.state).toBe('cookie_left');
+        expect(agent.belief.argmax()).toBe('cookie_left');
     });
 
     it('seed makes results deterministic', () => {
@@ -137,7 +137,7 @@ describe('Cookie Jar', () => {
         for (const seed of seeds) {
             const agent = makeAgent(seed);
             expect(agent.act()).toBeDefined();
-            expect(agent.state).toBeDefined();
+            expect(agent.belief.argmax()).toBeDefined();
         }
     });
 });

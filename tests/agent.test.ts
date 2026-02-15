@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createAgent } from '../src/factory';
+import { createAgent, computeAmbiguity } from '../src/factory';
 import { DiscreteBelief } from '../src/beliefs/discrete.belief';
 import { DiscreteTransition } from '../src/transition/discrete.transition';
 import { DiscreteObservation } from '../src/observation/discrete.observation';
@@ -65,7 +65,7 @@ describe('Agent', () => {
 
             agent.observe('see_a');
 
-            expect(agent.exportBelief().state_a).toBeGreaterThan(
+            expect(agent.belief.probability('state_a')).toBeGreaterThan(
                 HIGH_PROBABILITY_THRESHOLD,
             );
         });
@@ -74,10 +74,10 @@ describe('Agent', () => {
             const agent = makeAgent();
 
             agent.observe('see_a');
-            const afterOne = agent.exportBelief().state_a;
+            const afterOne = agent.belief.probability('state_a');
 
             agent.observe('see_a');
-            const afterTwo = agent.exportBelief().state_a;
+            const afterTwo = agent.belief.probability('state_a');
 
             expect(afterTwo).toBeGreaterThan(afterOne);
         });
@@ -113,8 +113,8 @@ describe('Agent', () => {
             const actionSeparate = agent2.act();
 
             expect(actionStep).toBe(actionSeparate);
-            expect(agent1.exportBelief().state_a).toBe(
-                agent2.exportBelief().state_a,
+            expect(agent1.belief.probability('state_a')).toBe(
+                agent2.belief.probability('state_a'),
             );
         });
     });
@@ -123,9 +123,13 @@ describe('Agent', () => {
         it('increases when uncertainty decreases', () => {
             const agent = makeAgent();
 
-            const feBefore = agent.freeEnergy;
+            const feBefore =
+                -agent.belief.entropy() +
+                computeAmbiguity(agent.belief, observationModel);
             agent.observe('see_a');
-            const feAfter = agent.freeEnergy;
+            const feAfter =
+                -agent.belief.entropy() +
+                computeAmbiguity(agent.belief, observationModel);
 
             expect(feAfter).toBeGreaterThan(feBefore);
         });
@@ -166,8 +170,8 @@ describe('Agent', () => {
         });
     });
 
-    describe('exportBelief', () => {
-        it('exports current belief distribution', () => {
+    describe('belief', () => {
+        it('returns current belief distribution', () => {
             const agent = createAgent({
                 belief: new DiscreteBelief({ state_a: 0.7, state_b: 0.3 }),
                 transitionModel,
@@ -175,43 +179,41 @@ describe('Agent', () => {
                 preferences,
             });
 
-            const exported = agent.exportBelief();
-
-            expect(exported.state_a).toBeCloseTo(0.7);
-            expect(exported.state_b).toBeCloseTo(0.3);
+            expect(agent.belief.probability('state_a')).toBeCloseTo(0.7);
+            expect(agent.belief.probability('state_b')).toBeCloseTo(0.3);
         });
 
-        it('exported belief can create new agent with same state', () => {
+        it('belief can create new agent with same state', () => {
             const agent1 = makeAgent(SEED_A);
             agent1.observe('see_a');
-            const exported = agent1.exportBelief();
 
             const agent2 = createAgent({
-                belief: new DiscreteBelief(exported),
+                belief: agent1.belief,
                 transitionModel,
                 observationModel,
                 preferences,
                 seed: SEED_A,
             });
 
-            const belief1 = agent1.exportBelief();
-            const belief2 = agent2.exportBelief();
-
-            expect(belief1.state_a).toBeCloseTo(belief2.state_a);
-            expect(belief1.state_b).toBeCloseTo(belief2.state_b);
+            expect(agent1.belief.probability('state_a')).toBeCloseTo(
+                agent2.belief.probability('state_a'),
+            );
+            expect(agent1.belief.probability('state_b')).toBeCloseTo(
+                agent2.belief.probability('state_b'),
+            );
         });
 
-        it('exported belief reflects observations', () => {
+        it('belief reflects observations', () => {
             const agent = makeAgent();
 
-            const beforeObs = agent.exportBelief();
+            const before = agent.belief.probability('state_a');
             agent.observe('see_a');
-            const afterObs = agent.exportBelief();
+            const after = agent.belief.probability('state_a');
 
-            expect(afterObs.state_a).toBeGreaterThan(beforeObs.state_a);
+            expect(after).toBeGreaterThan(before);
         });
 
-        it('new agent from exported belief behaves identically', () => {
+        it('new agent from belief behaves identically', () => {
             const agent1 = createAgent({
                 belief: new DiscreteBelief({ state_a: 0.8, state_b: 0.2 }),
                 transitionModel,
@@ -220,10 +222,8 @@ describe('Agent', () => {
                 seed: SEED_A,
             });
 
-            const exported = agent1.exportBelief();
-
             const agent2 = createAgent({
-                belief: new DiscreteBelief(exported),
+                belief: agent1.belief,
                 transitionModel,
                 observationModel,
                 preferences,

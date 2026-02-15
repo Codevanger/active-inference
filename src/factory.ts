@@ -1,221 +1,150 @@
-import { Belief, Preferences } from './models/belief.model';
+import { Belief, Distribution, Preferences } from './models/belief.model';
 import { ITransitionModel } from './models/transition.model';
 import { IObservationModel } from './models/observation.model';
 import { Agent, Habits } from './models/agent.model';
-import { GaussianAgent, GaussianPreferenceFn } from './models/gaussian-agent.model';
 import { GaussianBelief } from './beliefs/gaussian.belief';
 import { GaussianTransition } from './transition/gaussian.transition';
 import { GaussianObservation } from './observation/gaussian.observation';
 import { Random } from './helpers/math.helpers';
 
 /**
- * Configuration object for creating an Active Inference agent.
- *
- * This interface defines all the components needed to instantiate an agent
- * with its generative model and behavioral parameters.
- *
- * ## Required Components
- *
- * The generative model consists of:
- * - **belief**: Initial prior over hidden states (D matrix)
- * - **transitionModel**: State dynamics P(s'|s,a) (B matrix)
- * - **observationModel**: Observation likelihood P(o|s) (A matrix)
- * - **preferences**: Preferred observations as log probabilities (C vector)
- *
- * ## Optional Parameters
- *
- * Behavioral parameters that tune agent behavior:
- * - **seed**: For reproducible random behavior
- * - **planningHorizon**: How far ahead to plan (default: 1)
- * - **precision**: Action selection temperature (default: 1)
- * - **habits**: Prior action preferences (E matrix)
- *
- * @typeParam A - Union type of possible action names
- * @typeParam O - Union type of possible observation names
- * @typeParam S - Union type of possible state names
- *
- * @example
- * ```typescript
- * const config: AgentConfig<'left' | 'right', 'see_goal' | 'see_wall', 'at_goal' | 'at_start'> = {
- *   belief: new DiscreteBelief({ at_goal: 0.1, at_start: 0.9 }),
- *   transitionModel: myTransitions,
- *   observationModel: myObservations,
- *   preferences: { see_goal: 0, see_wall: -2 },
- *   planningHorizon: 3,
- *   precision: 4
- * };
- * ```
+ * Preference function over predicted observation means (Gaussian models).
+ * Returns a log-preference (0 = neutral, negative = undesired).
+ */
+export type GaussianPreferenceFn = (mean: number) => number;
+
+// ── Discrete EFE helpers (exported for advanced use) ─────────────
+
+/**
+ * Ambiguity = E_Q[H(o|s)] = −Σ_s Q(s) Σ_o P(o|s) log P(o|s)
+ */
+export function computeAmbiguity<
+    O extends string,
+    S extends string,
+>(
+    predictedBelief: Belief<S>,
+    observationModel: IObservationModel<O, S>,
+): number {
+    let ambiguity = 0;
+    for (const state of predictedBelief.states) {
+        const stateProb = predictedBelief.probability(state);
+        for (const obs of observationModel.observations) {
+            const obsProb = observationModel.probability(obs, state);
+            if (obsProb > 0 && stateProb > 0) {
+                ambiguity -= stateProb * obsProb * Math.log(obsProb);
+            }
+        }
+    }
+    return ambiguity;
+}
+
+/**
+ * Risk = −Σ_o Q(o) log C(o)
+ */
+export function computeRisk<
+    O extends string,
+    S extends string,
+>(
+    predictedBelief: Belief<S>,
+    observationModel: IObservationModel<O, S>,
+    preferences: Preferences<O>,
+): number {
+    let risk = 0;
+    for (const obs of observationModel.observations) {
+        let expectedObsProb = 0;
+        for (const state of predictedBelief.states) {
+            expectedObsProb +=
+                observationModel.probability(obs, state) *
+                predictedBelief.probability(state);
+        }
+        const preferredLogProb = preferences[obs] ?? -10;
+        if (expectedObsProb > 0) {
+            risk -= expectedObsProb * preferredLogProb;
+        }
+    }
+    return risk;
+}
+
+/**
+ * Export a discrete belief as a plain Distribution object.
+ */
+export function exportBelief<S extends string>(belief: Belief<S>): Distribution<S> {
+    const result = {} as Distribution<S>;
+    for (const state of belief.states) {
+        result[state] = belief.probability(state);
+    }
+    return result;
+}
+
+// ── Discrete Agent factory ───────────────────────────────────────
+
+/**
+ * Configuration object for creating a discrete Active Inference agent.
  */
 export interface AgentConfig<
     A extends string = string,
     O extends string = string,
     S extends string = string,
 > {
-    /**
-     * Initial belief distribution over hidden states.
-     *
-     * This is the agent's prior - what it believes about the world
-     * before receiving any observations. Can be uncertain (spread
-     * across states) or confident (concentrated on one state).
-     */
     belief: Belief<S>;
-
-    /**
-     * State transition model defining P(s'|s, a).
-     *
-     * Encodes how the agent believes actions affect world state.
-     * Used during planning to simulate future states.
-     */
     transitionModel: ITransitionModel<A, S>;
-
-    /**
-     * Observation model defining P(o|s).
-     *
-     * Encodes how hidden states generate observations.
-     * Used for Bayesian belief updates and computing ambiguity.
-     */
     observationModel: IObservationModel<O, S>;
-
-    /**
-     * Preferred observations expressed as log probabilities.
-     *
-     * Higher values = more preferred. Typically:
-     * - 0 for neutral/desired observations
-     * - Negative for undesired observations (e.g., -5 for pain)
-     *
-     * These preferences define the agent's "goals" - what observations
-     * it will act to make more likely.
-     */
     preferences: Preferences<O>;
-
-    /**
-     * Random seed for reproducible behavior.
-     *
-     * When set, the agent's stochastic action selection will be
-     * deterministic given the same sequence of observations.
-     * Useful for testing and debugging.
-     */
     seed?: number;
-
-    /**
-     * Planning horizon - number of time steps to look ahead.
-     *
-     * - 1 = greedy/reactive (only considers immediate outcomes)
-     * - 2+ = planning (considers future consequences)
-     *
-     * Higher values enable better long-term decisions but increase
-     * computation exponentially (actions^horizon policies to evaluate).
-     *
-     * @default 1
-     */
     planningHorizon?: number;
-
-    /**
-     * Precision parameter (β) for action selection.
-     *
-     * Controls the "temperature" of the softmax over Expected Free Energy:
-     * - β = 0: Uniform random action selection
-     * - β → ∞: Deterministic selection of best action
-     * - β = 1: Standard softmax (balanced exploration/exploitation)
-     *
-     * @default 1
-     */
     precision?: number;
-
-    /**
-     * Habitual action preferences (E matrix in Active Inference).
-     *
-     * Biases action selection independently of Expected Free Energy.
-     * Higher values make actions more likely to be selected regardless
-     * of their predicted outcomes.
-     *
-     * Useful for modeling:
-     * - Learned motor habits
-     * - Default behaviors
-     * - Action priors from experience
-     */
     habits?: Partial<Habits<A>>;
-
-    /**
-     * Beam width for policy search.
-     *
-     * Limits the number of candidate policies kept at each planning depth.
-     * Without this, the agent evaluates all actions^horizon policies.
-     *
-     * - 0 = no limit (full enumeration, default)
-     * - N > 0 = keep top-N policies per depth (beam search)
-     *
-     * @default 0
-     */
     beamWidth?: number;
 }
 
 /**
- * Factory function to create an Active Inference agent.
+ * Create a discrete Active Inference agent.
  *
- * This is the recommended way to instantiate agents, as it provides
- * a clean interface with sensible defaults for optional parameters.
- *
- * ## Type Inference
- *
- * TypeScript will automatically infer the type parameters from your
- * configuration objects, providing full type safety for actions,
- * observations, and states throughout your code.
- *
- * @typeParam A - Union type of possible action names (inferred from transitionModel)
- * @typeParam O - Union type of possible observation names (inferred from observationModel)
- * @typeParam S - Union type of possible state names (inferred from belief)
- *
- * @param config - Agent configuration object
- * @returns Configured Active Inference agent ready for use
- *
- * @example
- * ```typescript
- * // Create a simple agent
- * const agent = createAgent({
- *   belief: new DiscreteBelief({ safe: 0.5, danger: 0.5 }),
- *   transitionModel: new DiscreteTransition({
- *     stay: { safe: { safe: 1, danger: 0 }, danger: { safe: 0, danger: 1 } },
- *     flee: { safe: { safe: 0.9, danger: 0.1 }, danger: { safe: 0.7, danger: 0.3 } }
- *   }),
- *   observationModel: new DiscreteObservation({
- *     calm: { safe: 0.9, danger: 0.1 },
- *     alarm: { safe: 0.1, danger: 0.9 }
- *   }),
- *   preferences: { calm: 0, alarm: -5 },
- *   planningHorizon: 2,
- *   precision: 4,
- *   seed: 42  // For reproducibility
- * });
- *
- * // Use the agent
- * const action = agent.step('alarm');  // Types are inferred!
- * // action is typed as 'stay' | 'flee'
- * ```
- *
- * @see {@link Agent} - The agent class this creates
- * @see {@link AgentConfig} - Configuration interface
+ * EFE = ambiguity + risk, computed from the observation model and preferences.
+ * Learning (Dirichlet updates) is handled automatically in step().
  */
 export function createAgent<
     A extends string = string,
     O extends string = string,
     S extends string = string,
->(config: AgentConfig<A, O, S>): Agent<A, O, S> {
+>(config: AgentConfig<A, O, S>): Agent<A, Belief<S>, O> {
     const random =
         config.seed !== undefined ? new Random(config.seed) : new Random();
 
-    return new Agent<A, O, S>(
+    const computeEFE = (predicted: Belief<S>): number =>
+        computeAmbiguity(predicted, config.observationModel) +
+        computeRisk(predicted, config.observationModel, config.preferences);
+
+    const afterObserve = (
+        observation: O,
+        belief: Belief<S>,
+        previousAction: A | null,
+        previousBelief: Belief<S> | null,
+    ): void => {
+        const posteriorDist = exportBelief(belief);
+        config.observationModel.learn?.(observation, posteriorDist);
+
+        if (previousAction !== null && previousBelief !== null) {
+            const prevDist = exportBelief(previousBelief);
+            config.transitionModel.learn?.(previousAction, prevDist, posteriorDist);
+        }
+    };
+
+    return new Agent<A, Belief<S>, O>(
         config.belief,
         config.transitionModel,
         config.observationModel,
-        config.preferences,
+        computeEFE,
         random,
         config.planningHorizon ?? 1,
         config.precision ?? 1,
         config.habits ?? {},
         config.beamWidth ?? 0,
+        afterObserve,
     );
 }
+
+// ── Gaussian Agent factory ───────────────────────────────────────
 
 /**
  * Configuration for creating a Gaussian Active Inference agent.
@@ -231,35 +160,27 @@ export interface GaussianAgentConfig<A extends string = string> {
 }
 
 /**
- * Factory function to create a continuous (Gaussian) Active Inference agent.
+ * Create a continuous (Gaussian) Active Inference agent.
  *
- * @example
- * ```typescript
- * const agent = createGaussianAgent({
- *   belief: new GaussianBelief(0, 1),
- *   transitionModel: new GaussianTransition({
- *     push:  { fn: x => x + 1, noise: 0.1 },
- *     stay:  { fn: x => x,     noise: 0.1 },
- *   }),
- *   observationModel: new GaussianObservation({ scale: 1, noise: 0.1 }),
- *   preferences: (mean) => -mean * mean,
- *   planningHorizon: 3,
- *   precision: 4,
- *   seed: 42,
- * });
- * ```
+ * EFE = −C(E[y]) where C is the preference function.
+ * Ambiguity is constant for fixed observation noise and does not affect action selection.
  */
 export function createGaussianAgent<A extends string = string>(
     config: GaussianAgentConfig<A>,
-): GaussianAgent<A> {
+): Agent<A, GaussianBelief, number> {
     const random =
         config.seed !== undefined ? new Random(config.seed) : new Random();
 
-    return new GaussianAgent<A>(
+    const computeEFE = (predicted: GaussianBelief): number => {
+        const obsMean = config.observationModel.expectedObservation(predicted);
+        return -config.preferences(obsMean);
+    };
+
+    return new Agent<A, GaussianBelief, number>(
         config.belief,
         config.transitionModel,
         config.observationModel,
-        config.preferences,
+        computeEFE,
         random,
         config.planningHorizon ?? 1,
         config.precision ?? 1,

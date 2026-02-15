@@ -212,11 +212,11 @@ describe('T-Maze', () => {
 
     it('agent updates belief based on cue', () => {
         const agent = makeAgent();
-        expect(agent.exportBelief().center_left).toBeCloseTo(UNIFORM_PRIOR);
+        expect(agent.belief.probability('center_left')).toBeCloseTo(UNIFORM_PRIOR);
 
         agent.observe('cue_left');
 
-        expect(agent.exportBelief().center_left).toBeGreaterThan(
+        expect(agent.belief.probability('center_left')).toBeGreaterThan(
             HIGH_PROBABILITY_THRESHOLD,
         );
     });
@@ -225,10 +225,10 @@ describe('T-Maze', () => {
         const agent = makeAgent();
 
         agent.observe('cue_left');
-        const afterOne = agent.exportBelief().center_left;
+        const afterOne = agent.belief.probability('center_left');
 
         agent.observe('cue_left');
-        const afterTwo = agent.exportBelief().center_left;
+        const afterTwo = agent.belief.probability('center_left');
 
         expect(afterTwo).toBeGreaterThan(afterOne);
     });
@@ -239,7 +239,7 @@ describe('T-Maze', () => {
         agent.observe('cue_left');
         agent.observe('cue_right');
 
-        const prob = agent.exportBelief().center_left;
+        const prob = agent.belief.probability('center_left');
         expect(prob).toBeGreaterThan(AMBIGUOUS_LOW);
         expect(prob).toBeLessThan(AMBIGUOUS_HIGH);
     });
@@ -254,7 +254,7 @@ describe('T-Maze', () => {
             const action = agent.act();
             expect(['go_left', 'go_right']).toContain(action);
 
-            expect(agent.exportBelief().center_left).toBeGreaterThan(
+            expect(agent.belief.probability('center_left')).toBeGreaterThan(
                 HIGH_PROBABILITY_THRESHOLD,
             );
         }

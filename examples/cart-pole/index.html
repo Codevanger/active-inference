@@ -161,6 +161,7 @@
     <script type="module">
         import {
             createAgent,
+            computeAmbiguity,
             DiscreteBelief,
             DirichletTransition,
             DirichletObservation
@@ -285,10 +286,11 @@
         const uniformBelief = {};
         for (const s of STATES) uniformBelief[s] = 1 / STATES.length;
 
+        const obsModel = new DirichletObservation(buildObservationConcentrations());
         const agent = createAgent({
             belief: new DiscreteBelief(uniformBelief),
             transitionModel: new DirichletTransition(buildTransitionConcentrations()),
-            observationModel: new DirichletObservation(buildObservationConcentrations()),
+            observationModel: obsModel,
             preferences: buildPreferences(),
             planningHorizon: 3,
             precision: 8,
@@ -422,8 +424,8 @@
             const obs = discretize(sim.theta, sim.thetaDot);
             document.getElementById('statState').textContent = obs;
             document.getElementById('statAction').textContent = currentAction || '—';
-            document.getElementById('statFE').textContent =
-                agent.freeEnergy.toFixed(2);
+            const vfe = -agent.belief.entropy() + computeAmbiguity(agent.belief, obsModel);
+            document.getElementById('statFE').textContent = vfe.toFixed(2);
         }
 
         // ── Game state ───────────────────────────────────────────
