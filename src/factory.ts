@@ -2,6 +2,10 @@ import { Belief, Preferences } from './models/belief.model';
 import { ITransitionModel } from './models/transition.model';
 import { IObservationModel } from './models/observation.model';
 import { Agent, Habits } from './models/agent.model';
+import { GaussianAgent, GaussianPreferenceFn } from './models/gaussian-agent.model';
+import { GaussianBelief } from './beliefs/gaussian.belief';
+import { GaussianTransition } from './transition/gaussian.transition';
+import { GaussianObservation } from './observation/gaussian.observation';
 import { Random } from './helpers/math.helpers';
 
 /**
@@ -210,5 +214,54 @@ export function createAgent<
         config.precision ?? 1,
         config.habits ?? {},
         config.beamWidth ?? 0,
+    );
+}
+
+/**
+ * Configuration for creating a Gaussian Active Inference agent.
+ */
+export interface GaussianAgentConfig<A extends string = string> {
+    belief: GaussianBelief;
+    transitionModel: GaussianTransition<A>;
+    observationModel: GaussianObservation;
+    preferences: GaussianPreferenceFn;
+    seed?: number;
+    planningHorizon?: number;
+    precision?: number;
+}
+
+/**
+ * Factory function to create a continuous (Gaussian) Active Inference agent.
+ *
+ * @example
+ * ```typescript
+ * const agent = createGaussianAgent({
+ *   belief: new GaussianBelief(0, 1),
+ *   transitionModel: new GaussianTransition({
+ *     push:  { fn: x => x + 1, noise: 0.1 },
+ *     stay:  { fn: x => x,     noise: 0.1 },
+ *   }),
+ *   observationModel: new GaussianObservation({ scale: 1, noise: 0.1 }),
+ *   preferences: (mean) => -mean * mean,
+ *   planningHorizon: 3,
+ *   precision: 4,
+ *   seed: 42,
+ * });
+ * ```
+ */
+export function createGaussianAgent<A extends string = string>(
+    config: GaussianAgentConfig<A>,
+): GaussianAgent<A> {
+    const random =
+        config.seed !== undefined ? new Random(config.seed) : new Random();
+
+    return new GaussianAgent<A>(
+        config.belief,
+        config.transitionModel,
+        config.observationModel,
+        config.preferences,
+        random,
+        config.planningHorizon ?? 1,
+        config.precision ?? 1,
     );
 }

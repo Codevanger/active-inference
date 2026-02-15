@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trolley Problem — Gaussian Active Inference</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0f172a;
+            color: #e2e8f0;
+            font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 24px;
+        }
+        h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; color: #f8fafc; }
+        .subtitle { font-size: 13px; color: #64748b; margin-bottom: 8px; }
+        .description {
+            font-size: 12px; color: #94a3b8; max-width: 900px;
+            text-align: center; line-height: 1.6; margin-bottom: 20px;
+        }
+
+        canvas#scene {
+            border: 1px solid #1e293b; border-radius: 8px;
+            background: #020617; margin-bottom: 20px;
+        }
+
+        .matrix { display: grid; gap: 2px; margin-bottom: 20px; }
+        .matrix-header {
+            font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px;
+            color: #475569; text-align: center; padding: 6px;
+        }
+        .matrix-row-label {
+            font-size: 11px; color: #94a3b8; display: flex; align-items: center;
+            justify-content: flex-end; padding-right: 10px;
+        }
+        .cell {
+            background: #1e293b; border-radius: 6px; padding: 10px 8px;
+            text-align: center; min-width: 100px; border: 1px solid #334155;
+            transition: border-color 0.3s;
+        }
+        .cell.pull { border-color: #f59e0b; }
+        .cell.pass { border-color: #22c55e; }
+        .cell-decision {
+            font-size: 16px; font-weight: 700; letter-spacing: 1px; margin-bottom: 4px;
+        }
+        .cell-decision.pull { color: #f59e0b; }
+        .cell-decision.pass { color: #22c55e; }
+        .cell-decision.waiting { color: #334155; }
+        .cell-pct { font-size: 10px; color: #64748b; }
+        .cell-bar {
+            height: 4px; border-radius: 2px; margin-top: 4px;
+            background: #0f172a; overflow: hidden;
+        }
+        .cell-bar-fill {
+            height: 100%; border-radius: 2px;
+            transition: width 0.8s ease-out;
+        }
+        .cell-bar-fill.pull { background: #f59e0b; }
+        .cell-bar-fill.pass { background: #22c55e; }
+
+        #controls { display: flex; gap: 10px; margin-bottom: 20px; }
+        button {
+            background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
+            border-radius: 6px; padding: 8px 18px; font-family: inherit;
+            font-size: 13px; cursor: pointer; transition: background 0.15s;
+        }
+        button:hover { background: #334155; }
+
+        .model-info {
+            background: #1e293b; border: 1px solid #334155; border-radius: 10px;
+            padding: 16px 20px; width: 900px; font-size: 11px;
+            color: #94a3b8; line-height: 1.6;
+        }
+        .model-info h3 { font-size: 12px; color: #e2e8f0; margin-bottom: 8px; }
+        .model-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .model-grid code { color: #7dd3fc; font-size: 11px; }
+    </style>
+</head>
+<body>
+    <h1>The Escalating Trolley Problem</h1>
+    <p class="subtitle">Gaussian Active Inference — continuous state, discrete actions</p>
+    <p class="description">
+        State x is a continuous "danger level". Positive = people at risk (escalation).
+        Negative = people killed (guilt, absorbing).
+        <code>pull</code> flips x to −|x|. <code>pass</code> adds +1.
+        Catastrophe at x &ge; 4. How do starting position and planning horizon affect the decision?
+    </p>
+
+    <canvas id="scene" width="900" height="160"></canvas>
+
+    <div class="matrix" id="matrix"
+         style="grid-template-columns: 120px repeat(3, 1fr); grid-template-rows: auto repeat(3, auto);">
+        <div class="matrix-header"></div>
+        <div class="matrix-header">Horizon 1</div>
+        <div class="matrix-header">Horizon 2</div>
+        <div class="matrix-header">Horizon 3</div>
+
+        <div class="matrix-row-label">x = 1 &nbsp;(1 person)</div>
+        <div class="cell" id="c-1-1"><div class="cell-decision waiting">...</div><div class="cell-pct" id="p-1-1"></div><div class="cell-bar"><div class="cell-bar-fill" id="b-1-1" style="width:0%"></div></div></div>
+        <div class="cell" id="c-1-2"><div class="cell-decision waiting">...</div><div class="cell-pct" id="p-1-2"></div><div class="cell-bar"><div class="cell-bar-fill" id="b-1-2" style="width:0%"></div></div></div>
+        <div class="cell" id="c-1-3"><div class="cell-decision waiting">...</div><div class="cell-pct" id="p-1-3"></div><div class="cell-bar"><div class="cell-bar-fill" id="b-1-3" style="width:0%"></div></div></div>
+
+        <div class="matrix-row-label">x = 2 &nbsp;(2 people)</div>
+        <div class="cell" id="c-2-1"><div class="cell-decision waiting">...</div><div class="cell-pct" id="p-2-1"></div><div class="cell-bar"><div class="cell-bar-fill" id="b-2-1" style="width:0%"></div></div></div>
+        <div class="cell" id="c-2-2"><div class="cell-decision waiting">...</div><div class="cell-pct" id="p-2-2"></div><div class="cell-bar"><div class="cell-bar-fill" id="b-2-2" style="width:0%"></div></div></div>
+        <div class="cell" id="c-2-3"><div class="cell-decision waiting">...</div><div class="cell-pct" id="p-2-3"></div><div class="cell-bar"><div class="cell-bar-fill" id="b-2-3" style="width:0%"></div></div></div>
+
+        <div class="matrix-row-label">x = 3 &nbsp;(3 people)</div>
+        <div class="cell" id="c-3-1"><div class="cell-decision waiting">...</div><div class="cell-pct" id="p-3-1"></div><div class="cell-bar"><div class="cell-bar-fill" id="b-3-1" style="width:0%"></div></div></div>
+        <div class="cell" id="c-3-2"><div class="cell-decision waiting">...</div><div class="cell-pct" id="p-3-2"></div><div class="cell-bar"><div class="cell-bar-fill" id="b-3-2" style="width:0%"></div></div></div>
+        <div class="cell" id="c-3-3"><div class="cell-decision waiting">...</div><div class="cell-pct" id="p-3-3"></div><div class="cell-bar"><div class="cell-bar-fill" id="b-3-3" style="width:0%"></div></div></div>
+    </div>
+
+    <div id="controls">
+        <button id="runBtn">Run Experiment (100 seeds)</button>
+    </div>
+
+    <div class="model-info">
+        <h3>Gaussian Generative Model</h3>
+        <div class="model-grid">
+            <div>
+                <strong>State:</strong> x &isin; &#8477; (continuous)<br>
+                <strong>Belief:</strong> N(&mu;, &sigma;&sup2;) — Gaussian, Kalman updates<br>
+                <strong>Actions:</strong> pull (x' = &minus;|x|), pass (x' = x + 1)<br>
+                <strong>Precision:</strong> 4 &middot; <strong>Samples:</strong> 100
+            </div>
+            <div>
+                <strong>Preference C(x):</strong><br>
+                <code>0 &le; x &lt; 4 &rarr; 0</code> (neutral — observing dilemma)<br>
+                <code>x &ge; 4 &rarr; &minus;10</code> (catastrophe)<br>
+                <code>x &lt; 0 &rarr; &minus;x&sup2;</code> (guilt — quadratic in kills)
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import {
+            createGaussianAgent,
+            GaussianBelief,
+            GaussianTransition,
+            GaussianObservation,
+        } from './active-inference.bundle.js';
+
+        // ── Model ──────────────────────────────────────────────
+
+        const transitionModel = new GaussianTransition({
+            pull: { fn: (x) => (x > 0 ? -x : x), noise: 0.01 },
+            pass: { fn: (x) => (x > 0 ? x + 1 : x), noise: 0.01 },
+        });
+
+        const observationModel = new GaussianObservation({
+            scale: 1,
+            noise: 0.1,
+        });
+
+        function preferences(mean) {
+            if (mean >= 0 && mean < 4) return 0;
+            if (mean >= 4) return -10;
+            return -(mean * mean);
+        }
+
+        const PRECISION = 4;
+        const SAMPLE_SIZE = 100;
+
+        // ── Experiment ─────────────────────────────────────────
+
+        function runExperiment(startX, planningHorizon) {
+            const results = { pull: 0, pass: 0 };
+            for (let seed = 0; seed < SAMPLE_SIZE; seed++) {
+                const agent = createGaussianAgent({
+                    belief: new GaussianBelief(startX, 0.01),
+                    transitionModel,
+                    observationModel,
+                    preferences,
+                    planningHorizon,
+                    precision: PRECISION,
+                    seed,
+                });
+                results[agent.act()]++;
+            }
+            return results;
+        }
+
+        // ── Scene drawing ──────────────────────────────────────
+
+        function drawPerson(ctx, x, y, color = '#e2e8f0') {
+            ctx.strokeStyle = color;
+            ctx.fillStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(x, y - 12, 4, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(x, y - 8); ctx.lineTo(x, y + 2); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x - 5, y - 5); ctx.lineTo(x + 5, y - 5); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(x, y + 2); ctx.lineTo(x - 4, y + 10);
+            ctx.moveTo(x, y + 2); ctx.lineTo(x + 4, y + 10); ctx.stroke();
+        }
+
+        function drawScene() {
+            const canvas = document.getElementById('scene');
+            const ctx = canvas.getContext('2d');
+            const W = canvas.width, H = canvas.height;
+            ctx.clearRect(0, 0, W, H);
+
+            const trackY = 100;
+            const left = 60, right = W - 40;
+
+            // continuous number line
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(left, trackY); ctx.lineTo(right, trackY); ctx.stroke();
+
+            // ticks
+            const values = [-3, -2, -1, 0, 1, 2, 3, 4, 5];
+            const range = 8;
+            for (const v of values) {
+                const px = left + ((v + 3) / range) * (right - left);
+                ctx.strokeStyle = v === 4 ? '#ef4444' : '#475569';
+                ctx.lineWidth = v === 4 ? 2 : 1;
+                ctx.beginPath(); ctx.moveTo(px, trackY - 6); ctx.lineTo(px, trackY + 6); ctx.stroke();
+                ctx.fillStyle = v === 4 ? '#ef4444' : '#64748b';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(v.toString(), px, trackY + 18);
+            }
+
+            // region labels
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'center';
+
+            const gLeft = left;
+            const gRight = left + (3 / range) * (right - left);
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.06)';
+            ctx.fillRect(gLeft, 10, gRight - gLeft, trackY - 16);
+            ctx.fillStyle = '#ef4444';
+            ctx.globalAlpha = 0.6;
+            ctx.fillText('GUILT  (x < 0)', (gLeft + gRight) / 2, 24);
+            ctx.globalAlpha = 1;
+
+            const nLeft = gRight;
+            const nRight = left + (7 / range) * (right - left);
+            ctx.fillStyle = 'rgba(34, 197, 94, 0.04)';
+            ctx.fillRect(nLeft, 10, nRight - nLeft, trackY - 16);
+            ctx.fillStyle = '#22c55e';
+            ctx.globalAlpha = 0.6;
+            ctx.fillText('ESCALATION  (0 \u2264 x < 4)', (nLeft + nRight) / 2, 24);
+            ctx.globalAlpha = 1;
+
+            const cLeft = nRight;
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.1)';
+            ctx.fillRect(cLeft, 10, right - cLeft, trackY - 16);
+            ctx.fillStyle = '#ef4444';
+            ctx.globalAlpha = 0.8;
+            ctx.fillText('CATASTROPHE', (cLeft + right) / 2, 24);
+            ctx.globalAlpha = 1;
+
+            // people at x=1,2,3
+            for (let n = 1; n <= 3; n++) {
+                const px = left + ((n + 3) / range) * (right - left);
+                for (let p = 0; p < n; p++) {
+                    const offset = (p - (n - 1) / 2) * 10;
+                    drawPerson(ctx, px + offset, trackY - 25, '#e2e8f0');
+                }
+                ctx.fillStyle = '#94a3b8';
+                ctx.font = '9px monospace';
+                ctx.textAlign = 'center';
+                ctx.fillText(n + (n === 1 ? ' person' : ' people'), px, trackY - 44);
+            }
+
+            // skull at catastrophe
+            const cPx = left + (7 / range) * (right - left);
+            ctx.fillStyle = '#ef4444';
+            ctx.font = '18px serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('\u2620', cPx, trackY - 25);
+            ctx.fillStyle = '#ef4444';
+            ctx.font = '9px monospace';
+            ctx.fillText('5 die', cPx, trackY - 44);
+
+            // trolley
+            ctx.fillStyle = '#ef4444';
+            ctx.beginPath(); ctx.roundRect(left - 30, trackY - 14, 28, 16, 3); ctx.fill();
+            ctx.fillStyle = '#94a3b8';
+            ctx.beginPath(); ctx.arc(left - 23, trackY + 4, 3, 0, Math.PI * 2); ctx.fill();
+            ctx.beginPath(); ctx.arc(left - 9, trackY + 4, 3, 0, Math.PI * 2); ctx.fill();
+
+            // preference curve
+            const curveY = trackY + 35;
+            ctx.fillStyle = '#475569';
+            ctx.font = '9px monospace';
+            ctx.textAlign = 'left';
+            ctx.fillText('C(x):', 10, curveY + 4);
+            ctx.strokeStyle = '#7dd3fc';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            for (let i = 0; i <= 200; i++) {
+                const t = i / 200;
+                const v = -3 + t * 8;
+                const px = left + t * (right - left);
+                const pref = preferences(v);
+                const py = curveY - (pref / 10) * 25;
+                if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.stroke();
+            ctx.strokeStyle = '#334155';
+            ctx.lineWidth = 0.5;
+            ctx.setLineDash([3, 3]);
+            ctx.beginPath(); ctx.moveTo(left, curveY); ctx.lineTo(right, curveY); ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // ── Update matrix cell ─────────────────────────────────
+
+        function updateCell(startX, horizon, results) {
+            const id = `${startX}-${horizon}`;
+            const total = results.pull + results.pass;
+            const pullPct = Math.round((results.pull / total) * 100);
+            const dominant = results.pull > results.pass ? 'pull' : 'pass';
+
+            const cell = document.getElementById('c-' + id);
+            cell.className = 'cell ' + dominant;
+
+            const dec = cell.querySelector('.cell-decision');
+            dec.textContent = dominant.toUpperCase();
+            dec.className = 'cell-decision ' + dominant;
+
+            document.getElementById('p-' + id).textContent =
+                dominant === 'pull' ? `pull ${pullPct}%` : `pass ${100 - pullPct}%`;
+
+            const bar = document.getElementById('b-' + id);
+            bar.style.width = (dominant === 'pull' ? pullPct : 100 - pullPct) + '%';
+            bar.className = 'cell-bar-fill ' + dominant;
+        }
+
+        // ── Run all ────────────────────────────────────────────
+
+        function runAll() {
+            for (const startX of [1, 2, 3]) {
+                for (const horizon of [1, 2, 3]) {
+                    const results = runExperiment(startX, horizon);
+                    updateCell(startX, horizon, results);
+                }
+            }
+        }
+
+        drawScene();
+        setTimeout(runAll, 200);
+        document.getElementById('runBtn').addEventListener('click', runAll);
+    </script>
+</body>
+</html>

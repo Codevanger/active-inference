@@ -1,6 +1,6 @@
 {
     "name": "active-inference",
-    "version": "0.1.1",
+    "version": "0.2.0",
     "description": "Active Inference Framework implementation for JavaScript/TypeScript",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
@@ -12,7 +12,7 @@
         "test:watch": "vitest",
         "build": "tsc",
         "prepublish": "npm run build",
-        "build:examples": "npx esbuild src/index.ts --bundle --format=esm --outfile=examples/cart-pole/active-inference.bundle.js"
+        "build:examples": "npx esbuild src/index.ts --bundle --format=esm --outfile=examples/cart-pole/active-inference.bundle.js && cp examples/cart-pole/active-inference.bundle.js examples/trolley-problem/active-inference.bundle.js"
     },
     "keywords": [
         "active-inference",
