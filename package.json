@@ -27,12 +27,12 @@
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "https://github.com/codevanger/active-inference"
+        "url": "https://github.com/Codevanger/active-inference"
     },
     "bugs": {
-        "url": "https://github.com/codevanger/active-inference/issues"
+        "url": "https://github.com/Codevanger/active-inference/issues"
     },
-    "homepage": "https://github.com/codevanger/active-inference#readme",
+    "homepage": "https://github.com/Codevanger/active-inference#readme",
     "devDependencies": {
         "prettier": "^3.8.1",
         "typescript": "^5.9.3",
